@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Configure /etc/hosts so localhost -> 127.0.0.2 and facebook.com -> 8.8.8.8
+
+set -euo pipefail
+
+if [ "${EUID:-$(id -u)}" -ne 0 ]; then
+  printf '%s\n' "This script must be run as root (try: sudo $0)" >&2
+  exit 1
+fi
+
+HOSTS_FILE="/etc/hosts"
+BACKUP="/etc/hosts.backup.$(date +%Y%m%d-%H%M%S)"
+TMP="$(mktemp)"
+
+cp -p -- "$HOSTS_FILE" "$BACKUP"
+printf 'Backup created: %s\n' "$BACKUP"
+
+awk '
+  BEGIN {
+    replaced_localhost = 0
+  }
+  # Keep comments and empty lines as-is
+  /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }
+
+  {
+    line = $0
+  }
+
+  # Remove any mapping for facebook.com (word match)
+  {
+    # word match for facebook.com (avoid matching subdomains)
+    if (match(line, /(^|[[:space:]])facebook\.com([[:space:]]|$)/)) {
+      next
+    }
+  }
+
+  # Replace IPv4 localhost mapping once:
+  # Common default line is exactly "127.0.0.1 localhost"
+  # But be defensive: if line starts with an IPv4 and includes a bare "localhost"
+  # we replace that line (first time only)
+  {
+    if (replaced_localhost == 0 &&
+        match(line, /^[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[[:space:]].*$/) &&
+        match(line, /(^|[[:space:]])localhost([[:space:]]|$)/)) {
+      print "127.0.0.2 localhost"
+      replaced_localhost = 1
+      next
+    }
+  }
+
+  # Otherwise keep the line
+  { print }
+' -- "$HOSTS_FILE" > "$TMP"
+
+if ! grep -Eq '^[[:space:]]*127\.0\.0\.2[[:space:]]+localhost([[:space:]]|$)' "$TMP"; then
+  printf '%s\n' "127.0.0.2 localhost" >> "$TMP"
+fi
+
+printf '%s\n' "8.8.8.8 facebook.com" >> "$TMP"
+
+install -m 644 -o root -g root -- "$TMP" "$HOSTS_FILE"
+rm -f -- "$TMP"
+
+printf '%s\n' "Done. Current relevant mappings:"
+grep -E '(^|\s)(localhost|facebook\.com)(\s|$)' "$HOSTS_FILE" || true
