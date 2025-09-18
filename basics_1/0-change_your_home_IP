@@ -10,42 +10,31 @@ fi
 
 HOSTS_FILE="/etc/hosts"
 BACKUP="/etc/hosts.backup.$(date +%Y%m%d-%H%M%S)"
-TMP="$(mktemp)"
+TMP="$(mktemp /etc/hosts.new.XXXXXX)"
 
 cp -p "$HOSTS_FILE" "$BACKUP"
 printf 'Backup created: %s\n' "$BACKUP"
 
 awk '
-  BEGIN {
-    replaced_localhost = 0
-  }
+  BEGIN { replaced_localhost = 0 }
   # Keep comments and empty lines
   /^[[:space:]]*#/ || /^[[:space:]]*$/ { print; next }
 
   {
     line = $0
-  }
+    # Drop any existing mapping of a bare-word facebook.com
+    if (match(line, /(^|[[:space:]])facebook\.com([[:space:]]|$)/)) next
 
-  # Remove any mapping for a bare-word facebook.com
-  {
-    if (match(line, /(^|[[:space:]])facebook\.com([[:space:]]|$)/)) {
-      next
-    }
-  }
-
-  # Replace the first IPv4 line that maps localhost
-  {
-    if (replaced_localhost == 0 &&
+    # Replace the first IPv4 line that maps localhost
+    if (!replaced_localhost &&
         match(line, /^[[:space:]]*[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+[[:space:]].*$/) &&
         match(line, /(^|[[:space:]])localhost([[:space:]]|$)/)) {
       print "127.0.0.2 localhost"
       replaced_localhost = 1
       next
     }
+    print
   }
-
-  # Otherwise keep the line
-  { print }
 ' "$HOSTS_FILE" > "$TMP"
 
 if ! grep -Eq '^[[:space:]]*127\.0\.0\.2[[:space:]]+localhost([[:space:]]|$)' "$TMP"; then
@@ -54,8 +43,9 @@ fi
 
 printf '%s\n' "8.8.8.8 facebook.com" >> "$TMP"
 
-mv "$TMP" "$HOSTS_FILE"
+cp -f "$TMP" "$HOSTS_FILE"
 chown root:root "$HOSTS_FILE"
 chmod 644 "$HOSTS_FILE"
+rm -f "$TMP"
 
-grep -E '(^|\s)(localhost|facebook\.com)(\s|$)' "$HOSTS_FILE" || true
+grep -E '(^|[[:space:]])(localhost|facebook\.com)([[:space:]]|$)' "$HOSTS_FILE" || true
